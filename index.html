@@ -3,15 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>AR4</title>
-  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <title>AR5</title>
   <style>
     html, body {
       margin: 0;
       height: 100%;
       overflow: hidden;
       background: #000;
-      touch-action: none; /* ブラウザ標準のスクロールや引っ張りリフレッシュを禁止 */
     }
     /* 背景画像＋切り抜いた人物を描くキャンバス（一番奥） */
     #bg-canvas {
@@ -21,15 +19,6 @@
       width: 100%;
       height: 100%;
       z-index: 0;
-    }
-    /* 前景（halloween-ar.png）を描くA-Frameシーン（人物の手前） */
-    a-scene {
-      position: fixed !important;
-      top: 0;
-      left: 0;
-      width: 100% !important;
-      height: 100% !important;
-      z-index: 1;
     }
     #camera-video {
       display: none;
@@ -91,104 +80,9 @@
   <button id="switch-btn">カメラ切替</button>
   <div id="status">読み込み中…</div>
 
-  <a-scene embedded vr-mode-ui="enabled: false" renderer="alpha: true">
-    <a-assets>
-      <img id="halloween-ar-img" src="halloween-ar.png">
-    </a-assets>
-
-    <a-image id="ar-object" src="#halloween-ar-img" position="0 0 -4" width="2" height="2"></a-image>
-
-    <a-entity camera look-controls="enabled: false"></a-entity>
-  </a-scene>
-
-<script>
-// ==========================================
-// 1. 指定の指操作（1本全方向回転・2本拡大縮小・3本移動）
-// ==========================================
-const arObject = document.getElementById('ar-object');
-let startX = 0;
-let startY = 0;          // 上下回転用の初期位置
-let startRotationX = 0;  // X軸（上下）の初期角度
-let startRotationY = 0;
-let startDist = 0;
-let startScaleX = 1, startScaleY = 1;
-let startObjX = 0, startObjY = 0;
-let startTouchPos3 = { x: 0, y: 0 };
-
-window.addEventListener('touchmove', function(e) {
-  e.preventDefault();
-}, { passive: false });
-
-window.addEventListener('touchstart', function(e) {
-  if (e.touches.length === 1) {
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY; // 現在のY座標を保存
-
-    const currentRot = arObject.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
-    startRotationX = currentRot.x; // 現在のX軸の回転角を保存
-    startRotationY = currentRot.y;
-  } else if (e.touches.length === 2) {
-    startDist = Math.hypot(
-      e.touches[0].clientX - e.touches[1].clientX,
-      e.touches[0].clientY - e.touches[1].clientY
-    );
-    const currentScale = arObject.getAttribute('scale') || { x: 1, y: 1, z: 1 };
-    startScaleX = currentScale.x;
-    startScaleY = currentScale.y;
-  } else if (e.touches.length === 3) {
-    startTouchPos3.x = (e.touches[0].clientX + e.touches[1].clientX + e.touches[2].clientX) / 3;
-    startTouchPos3.y = (e.touches[0].clientY + e.touches[1].clientY + e.touches[2].clientY) / 3;
-    const currentPos = arObject.getAttribute('position') || { x: 0, y: 0, z: -4 };
-    startObjX = currentPos.x;
-    startObjY = currentPos.y;
-  }
-});
-
-window.addEventListener('touchmove', function(e) {
-  if (e.touches.length === 1 && startX !== 0) {
-    const deltaX = e.touches[0].clientX - startX;
-    const deltaY = e.touches[0].clientY - startY; // 上下の移動量を計算
-
-    const newRotationY = startRotationY + (deltaX * 0.5); // 左右の動きでY軸回転
-    const newRotationX = startRotationX + (deltaY * 0.5); // 上下の動きでX軸回転
-
-    // 第1引数に newRotationX を適用して全方向回転にする
-    arObject.setAttribute('rotation', `${newRotationX} ${newRotationY} 0`);
-
-  } else if (e.touches.length === 2 && startDist !== 0) {
-    const currentDist = Math.hypot(
-      e.touches[0].clientX - e.touches[1].clientX,
-      e.touches[0].clientY - e.touches[1].clientY
-    );
-    const factor = currentDist / startDist;
-    let newScaleX = Math.max(0.2, Math.min(5.0, startScaleX * factor));
-    let newScaleY = Math.max(0.2, Math.min(5.0, startScaleY * factor));
-    arObject.setAttribute('scale', `${newScaleX} ${newScaleY} 1`);
-
-  } else if (e.touches.length === 3 && startTouchPos3.x !== 0) {
-    const currentTouchX = (e.touches[0].clientX + e.touches[1].clientX + e.touches[2].clientX) / 3;
-    const currentTouchY = (e.touches[0].clientY + e.touches[1].clientY + e.touches[2].clientY) / 3;
-    const deltaX = currentTouchX - startTouchPos3.x;
-    const deltaY = currentTouchY - startTouchPos3.y;
-    const newX = startObjX + (deltaX * 0.012);
-    const newY = startObjY - (deltaY * 0.012);
-    arObject.setAttribute('position', `${newX} ${newY} -4`);
-  }
-});
-
-window.addEventListener('touchend', function(e) {
-  if (e.touches.length < 3) startTouchPos3 = { x: 0, y: 0 };
-  if (e.touches.length < 2) startDist = 0;
-  if (e.touches.length < 1) {
-    startX = 0;
-    startY = 0; // 指を離した時にリセット
-  }
-});
-</script>
-
 <script type="module">
 // ==========================================
-// 2. カメラ映像から人物を切り抜き、背景画像と合成
+// 1. カメラ映像から人物を切り抜き、背景画像と合成
 // ==========================================
 import { FilesetResolver, ImageSegmenter } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
 
@@ -366,22 +260,10 @@ document.getElementById('switch-btn').addEventListener('click', async () => {
 });
 
 // ==========================================
-// 3. 写真撮影（背景＋人物＋前景画像を合成して保存）
+// 2. 写真撮影（背景＋人物を合成して保存）
 // ==========================================
 document.getElementById('snap-btn').addEventListener('click', function() {
-  const scene = document.querySelector('a-scene');
-  if (!scene || !scene.canvas) {
-    alert('AR機能の読み込み中です。数秒待ってからもう一度押してください。');
-    return;
-  }
-
-  const mergeCanvas = document.createElement('canvas');
-  mergeCanvas.width = bgCanvas.width;
-  mergeCanvas.height = bgCanvas.height;
-  const ctx = mergeCanvas.getContext('2d');
-  ctx.drawImage(bgCanvas, 0, 0);
-  scene.renderer.render(scene.object3D, scene.camera); // 前景を描き直してから取り込む
-  ctx.drawImage(scene.canvas, 0, 0, mergeCanvas.width, mergeCanvas.height);
+  const mergeCanvas = bgCanvas;
 
   try {
     const imgData = mergeCanvas.toDataURL('image/png');
