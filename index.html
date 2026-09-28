@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AR4</title>
+  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      touch-action: none; /* ブラウザ標準のスクロールや引っ張りリフレッシュを禁止 */
+    }
+    /* 背景画像＋切り抜いた人物を描くキャンバス（一番奥） */
+    #bg-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+    }
+    /* 前景（halloween-ar.png）を描くA-Frameシーン（人物の手前） */
+    a-scene {
+      position: fixed !important;
+      top: 0;
+      left: 0;
+      width: 100% !important;
+      height: 100% !important;
+      z-index: 1;
+    }
+    #camera-video {
+      display: none;
+    }
+    /* 撮影ボタンのスタイル */
+    #snap-btn {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 24px;
+      font-size: 16px;
+      background-color: #ff69b4;
+      color: white;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      z-index: 1000;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      font-weight: bold;
+    }
+    #snap-btn:active {
+      background-color: #ff1493;
+    }
+    /* カメラ切り替えボタン */
+    #switch-btn {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      padding: 8px 14px;
+      font-size: 14px;
+      background-color: rgba(0,0,0,0.5);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 20px;
+      cursor: pointer;
+      z-index: 1000;
+    }
+    /* 読み込み中などのメッセージ */
+    #status {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      right: 120px;
+      color: white;
+      font-size: 13px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      z-index: 1000;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <video id="camera-video" playsinline muted autoplay></video>
+  <canvas id="bg-canvas"></canvas>
+
+  <button id="snap-btn">写真を撮る</button>
+  <button id="switch-btn">カメラ切替</button>
+  <div id="status">読み込み中…</div>
+
+  <a-scene embedded vr-mode-ui="enabled: false" renderer="alpha: true">
+    <a-assets>
+      <img id="halloween-ar-img" src="halloween-ar.png">
+    </a-assets>
+
+    <a-image id="ar-object" src="#halloween-ar-img" position="0 0 -4" width="2" height="2"></a-image>
+
+    <a-entity camera look-controls="enabled: false"></a-entity>
+  </a-scene>
+
+<script>
+// ==========================================
+// 1. 指定の指操作（1本全方向回転・2本拡大縮小・3本移動）
+// ==========================================
+const arObject = document.getElementById('ar-object');
+let startX = 0;
+let startY = 0;          // 上下回転用の初期位置
+let startRotationX = 0;  // X軸（上下）の初期角度
+let startRotationY = 0;
+let startDist = 0;
+let startScaleX = 1, startScaleY = 1;
+let startObjX = 0, startObjY = 0;
+let startTouchPos3 = { x: 0, y: 0 };
+
+window.addEventListener('touchmove', function(e) {
+  e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('touchstart', function(e) {
+  if (e.touches.length === 1) {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY; // 現在のY座標を保存
+
+    const currentRot = arObject.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+    startRotationX = currentRot.x; // 現在のX軸の回転角を保存
+    startRotationY = currentRot.y;
+  } else if (e.touches.length === 2) {
+    startDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    const currentScale = arObject.getAttribute('scale') || { x: 1, y: 1, z: 1 };
+    startScaleX = currentScale.x;
+    startScaleY = currentScale.y;
+  } else if (e.touches.length === 3) {
+    startTouchPos3.x = (e.touches[0].clientX + e.touches[1].clientX + e.touches[2].clientX) / 3;
+    startTouchPos3.y = (e.touches[0].clientY + e.touches[1].clientY + e.touches[2].clientY) / 3;
+    const currentPos = arObject.getAttribute('position') || { x: 0, y: 0, z: -4 };
+    startObjX = currentPos.x;
+    startObjY = currentPos.y;
+  }
+});
+
+window.addEventListener('touchmove', function(e) {
+  if (e.touches.length === 1 && startX !== 0) {
+    const deltaX = e.touches[0].clientX - startX;
+    const deltaY = e.touches[0].clientY - startY; // 上下の移動量を計算
+
+    const newRotationY = startRotationY + (deltaX * 0.5); // 左右の動きでY軸回転
+    const newRotationX = startRotationX + (deltaY * 0.5); // 上下の動きでX軸回転
+
+    // 第1引数に newRotationX を適用して全方向回転にする
+    arObject.setAttribute('rotation', `${newRotationX} ${newRotationY} 0`);
+
+  } else if (e.touches.length === 2 && startDist !== 0) {
+    const currentDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    const factor = currentDist / startDist;
+    let newScaleX = Math.max(0.2, Math.min(5.0, startScaleX * factor));
+    let newScaleY = Math.max(0.2, Math.min(5.0, startScaleY * factor));
+    arObject.setAttribute('scale', `${newScaleX} ${newScaleY} 1`);
+
+  } else if (e.touches.length === 3 && startTouchPos3.x !== 0) {
+    const currentTouchX = (e.touches[0].clientX + e.touches[1].clientX + e.touches[2].clientX) / 3;
+    const currentTouchY = (e.touches[0].clientY + e.touches[1].clientY + e.touches[2].clientY) / 3;
+    const deltaX = currentTouchX - startTouchPos3.x;
+    const deltaY = currentTouchY - startTouchPos3.y;
+    const newX = startObjX + (deltaX * 0.012);
+    const newY = startObjY - (deltaY * 0.012);
+    arObject.setAttribute('position', `${newX} ${newY} -4`);
+  }
+});
+
+window.addEventListener('touchend', function(e) {
+  if (e.touches.length < 3) startTouchPos3 = { x: 0, y: 0 };
+  if (e.touches.length < 2) startDist = 0;
+  if (e.touches.length < 1) {
+    startX = 0;
+    startY = 0; // 指を離した時にリセット
+  }
+});
+</script>
+
+<script type="module">
+// ==========================================
+// 2. カメラ映像から人物を切り抜き、背景画像と合成
+// ==========================================
+import { FilesetResolver, ImageSegmenter } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const BACKGROUND_SRC = 'background.jpg'; // ← 背景画像のファイル名
+const BG_FOCUS_X = 0.65; // 背景画像の横方向で画面中央に合わせる位置（0=左端, 0.5=中央, 1=右端）。0.65で地球が入る
+const BG_FOCUS_Y = 0.5;  // 縦方向の位置（0=上端, 0.5=中央, 1=下端）
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const SEG_WIDTH = 256; // 切り抜き処理の解像度（小さいほど軽い）
+
+const video = document.getElementById('camera-video');
+const bgCanvas = document.getElementById('bg-canvas');
+const bgCtx = bgCanvas.getContext('2d');
+const statusEl = document.getElementById('status');
+
+// 切り抜き用の作業キャンバス
+const segCanvas = document.createElement('canvas');   // 縮小したカメラ映像
+const segCtx = segCanvas.getContext('2d', { willReadFrequently: true });
+const maskCanvas = document.createElement('canvas');  // 人物マスク
+const maskCtx = maskCanvas.getContext('2d');
+const personCanvas = document.createElement('canvas'); // 切り抜いた人物
+const personCtx = personCanvas.getContext('2d');
+
+let facingMode = 'user'; // 'user' = インカメラ, 'environment' = 外カメラ
+let stream = null;
+let segmenter = null;
+let bgImage = null;
+let lastTime = -1;
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+// 画面いっぱいに縦横比を保って描く（はみ出しはトリミング）
+// focusX/focusY：画像のどの位置を画面中央に寄せるか（0〜1、0.5で中央）
+function coverRect(srcW, srcH, dstW, dstH, focusX = 0.5, focusY = 0.5) {
+  const scale = Math.max(dstW / srcW, dstH / srcH);
+  const w = srcW * scale;
+  const h = srcH * scale;
+  const x = Math.min(0, Math.max(dstW - w, dstW / 2 - w * focusX));
+  const y = Math.min(0, Math.max(dstH - h, dstH / 2 - h * focusY));
+  return { x, y, w, h };
+}
+
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  bgCanvas.width = Math.round(window.innerWidth * dpr);
+  bgCanvas.height = Math.round(window.innerHeight * dpr);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function loadBackground() {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = BACKGROUND_SRC;
+  });
+}
+
+async function startCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+}
+
+async function createSegmenter() {
+  const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+  const options = (delegate) => ({
+    baseOptions: { modelAssetPath: MODEL_URL, delegate },
+    runningMode: 'VIDEO',
+    outputCategoryMask: false,
+    outputConfidenceMasks: true
+  });
+  try {
+    return await ImageSegmenter.createFromOptions(fileset, options('GPU'));
+  } catch (e) {
+    return await ImageSegmenter.createFromOptions(fileset, options('CPU'));
+  }
+}
+
+// 人物だけを personCanvas に描く
+function updatePerson(vw, vh) {
+  const sw = SEG_WIDTH;
+  const sh = Math.round(SEG_WIDTH * vh / vw);
+  if (segCanvas.width !== sw || segCanvas.height !== sh) {
+    segCanvas.width = maskCanvas.width = sw;
+    segCanvas.height = maskCanvas.height = sh;
+  }
+  if (personCanvas.width !== vw || personCanvas.height !== vh) {
+    personCanvas.width = vw;
+    personCanvas.height = vh;
+  }
+  segCtx.drawImage(video, 0, 0, sw, sh);
+
+  let now = performance.now();
+  if (now <= lastTime) now = lastTime + 1;
+  lastTime = now;
+
+  const result = segmenter.segmentForVideo(segCanvas, now);
+  const mask = result.confidenceMasks[0];
+  const conf = mask.getAsFloat32Array();
+  const imageData = maskCtx.createImageData(mask.width, mask.height);
+  for (let i = 0; i < conf.length; i++) {
+    imageData.data[i * 4 + 3] = conf[i] * 255; // 人物らしさ → 不透明度
+  }
+  result.close();
+  if (maskCanvas.width !== imageData.width || maskCanvas.height !== imageData.height) {
+    maskCanvas.width = imageData.width;
+    maskCanvas.height = imageData.height;
+  }
+  maskCtx.putImageData(imageData, 0, 0);
+
+  personCtx.globalCompositeOperation = 'copy';
+  personCtx.drawImage(video, 0, 0, vw, vh);
+  personCtx.globalCompositeOperation = 'destination-in';
+  personCtx.imageSmoothingEnabled = true;
+  personCtx.drawImage(maskCanvas, 0, 0, vw, vh); // 拡大時のぼかしで輪郭がなめらかに
+  personCtx.globalCompositeOperation = 'source-over';
+}
+
+function render() {
+  const W = bgCanvas.width;
+  const H = bgCanvas.height;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+
+  bgCtx.clearRect(0, 0, W, H);
+
+  if (vw && vh) {
+    const useSegmentation = segmenter && bgImage;
+
+    // 1) 背景画像
+    if (useSegmentation) {
+      const r = coverRect(bgImage.naturalWidth, bgImage.naturalHeight, W, H, BG_FOCUS_X, BG_FOCUS_Y);
+      bgCtx.drawImage(bgImage, r.x, r.y, r.w, r.h);
+    }
+
+    // 2) 人物（背景画像がなければカメラ映像そのまま）
+    let source = video;
+    if (useSegmentation) {
+      try {
+        updatePerson(vw, vh);
+        source = personCanvas;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    const r = coverRect(vw, vh, W, H);
+    bgCtx.save();
+    if (facingMode === 'user') {
+      // インカメラは鏡のように左右反転して表示
+      bgCtx.translate(W, 0);
+      bgCtx.scale(-1, 1);
+    }
+    bgCtx.drawImage(source, r.x, r.y, r.w, r.h);
+    bgCtx.restore();
+  }
+
+  requestAnimationFrame(render);
+}
+
+document.getElementById('switch-btn').addEventListener('click', async () => {
+  facingMode = facingMode === 'user' ? 'environment' : 'user';
+  try {
+    await startCamera();
+  } catch (e) {
+    alert('カメラを切り替えられませんでした。');
+  }
+});
+
+// ==========================================
+// 3. 写真撮影（背景＋人物＋前景画像を合成して保存）
+// ==========================================
+document.getElementById('snap-btn').addEventListener('click', function() {
+  const scene = document.querySelector('a-scene');
+  if (!scene || !scene.canvas) {
+    alert('AR機能の読み込み中です。数秒待ってからもう一度押してください。');
+    return;
+  }
+
+  const mergeCanvas = document.createElement('canvas');
+  mergeCanvas.width = bgCanvas.width;
+  mergeCanvas.height = bgCanvas.height;
+  const ctx = mergeCanvas.getContext('2d');
+  ctx.drawImage(bgCanvas, 0, 0);
+  scene.renderer.render(scene.object3D, scene.camera); // 前景を描き直してから取り込む
+  ctx.drawImage(scene.canvas, 0, 0, mergeCanvas.width, mergeCanvas.height);
+
+  try {
+    const imgData = mergeCanvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.download = 'ar-photo_' + Date.now() + '.png';
+    link.href = imgData;
+    link.click();
+  } catch (e) {
+    try {
+      const imgData = mergeCanvas.toDataURL('image/png');
+      const newTab = window.open();
+      newTab.document.body.innerHTML = `<img src="${imgData}" style="width:100%;">`;
+    } catch(err) {
+      alert('自動保存が制限されました。スマートフォンのスクリーンショット機能で撮影してください。');
+    }
+  }
+});
+
+// ==========================================
+// 起動
+// ==========================================
+(async () => {
+  try {
+    await startCamera();
+  } catch (e) {
+    setStatus('カメラを使用できません。ブラウザのカメラ許可を確認してください。');
+    return;
+  }
+  requestAnimationFrame(render);
+
+  bgImage = await loadBackground();
+  if (!bgImage) {
+    setStatus('背景画像（' + BACKGROUND_SRC + '）が見つかりません。カメラ映像のまま表示します。');
+    return;
+  }
+
+  setStatus('人物切り抜きを準備中…');
+  try {
+    segmenter = await createSegmenter();
+    setStatus('');
+  } catch (e) {
+    console.error(e);
+    setStatus('人物切り抜きを読み込めませんでした。カメラ映像のまま表示します。');
+  }
+})();
+</script>
+</body>
+</html>
