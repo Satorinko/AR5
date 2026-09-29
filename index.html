@@ -57,6 +57,45 @@
       cursor: pointer;
       z-index: 1000;
     }
+    /* 撮影した写真のプレビュー画面 */
+    #preview {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 2000;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    #preview.show { display: flex; }
+    #preview img {
+      max-width: 100%;
+      max-height: 70vh;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+    #preview p {
+      color: white;
+      font-size: 13px;
+      margin: 0;
+      text-align: center;
+    }
+    #preview .btn-row { display: flex; gap: 12px; }
+    #preview button {
+      padding: 12px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      font-weight: bold;
+      color: white;
+      background-color: #ff69b4;
+    }
+    #preview button.secondary { background-color: #666; }
     /* 読み込み中などのメッセージ */
     #status {
       position: fixed;
@@ -79,6 +118,15 @@
   <button id="snap-btn">写真を撮る</button>
   <button id="switch-btn">カメラ切替</button>
   <div id="status">読み込み中…</div>
+
+  <div id="preview">
+    <img id="preview-img" alt="撮影した写真">
+    <p>「保存」を押すか、画像を長押しして保存してください</p>
+    <div class="btn-row">
+      <button id="save-btn">保存</button>
+      <button id="close-btn" class="secondary">閉じる</button>
+    </div>
+  </div>
 
 <script type="module">
 // ==========================================
@@ -260,25 +308,66 @@ document.getElementById('switch-btn').addEventListener('click', async () => {
 });
 
 // ==========================================
-// 2. 写真撮影（背景＋人物を合成して保存）
+// 2. 写真撮影（背景＋人物を合成 → プレビュー → 保存）
 // ==========================================
-document.getElementById('snap-btn').addEventListener('click', function() {
-  const mergeCanvas = bgCanvas;
+const previewEl = document.getElementById('preview');
+const previewImg = document.getElementById('preview-img');
+let capturedDataUrl = null;
 
+document.getElementById('snap-btn').addEventListener('click', function() {
+  // 画面に描いているキャンバスをそのまま写真にする（画面と同じ縦横比）
   try {
-    const imgData = mergeCanvas.toDataURL('image/png');
-    const link = document.createElement('a');
-    link.download = 'ar-photo_' + Date.now() + '.png';
-    link.href = imgData;
-    link.click();
+    capturedDataUrl = bgCanvas.toDataURL('image/png');
   } catch (e) {
+    alert('写真を作成できませんでした。スマートフォンのスクリーンショット機能で撮影してください。');
+    return;
+  }
+  previewImg.src = capturedDataUrl;
+  previewEl.classList.add('show');
+});
+
+document.getElementById('close-btn').addEventListener('click', function() {
+  previewEl.classList.remove('show');
+});
+
+// data URL → Blob（保存・共有用）
+function dataUrlToBlob(dataUrl) {
+  const [head, body] = dataUrl.split(',');
+  const mime = head.match(/:(.*?);/)[1];
+  const bin = atob(body);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+document.getElementById('save-btn').addEventListener('click', async function() {
+  if (!capturedDataUrl) return;
+  const fileName = 'ar-photo_' + Date.now() + '.png';
+  const blob = dataUrlToBlob(capturedDataUrl);
+  const file = new File([blob], fileName, { type: 'image/png' });
+
+  // iPhone / iPad / Android：共有シートを開き「画像を保存」で写真アプリに保存できる
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      const imgData = mergeCanvas.toDataURL('image/png');
-      const newTab = window.open();
-      newTab.document.body.innerHTML = `<img src="${imgData}" style="width:100%;">`;
-    } catch(err) {
-      alert('自動保存が制限されました。スマートフォンのスクリーンショット機能で撮影してください。');
+      await navigator.share({ files: [file] });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // ユーザーがキャンセルした
     }
+  }
+
+  // パソコンなど：ファイルとしてダウンロード
+  try {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = fileName;
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (e) {
+    alert('自動保存ができない環境です。画像を長押しして「写真に追加」を選んでください。');
   }
 });
 
